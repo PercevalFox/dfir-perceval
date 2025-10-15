@@ -1,4 +1,3 @@
-
 name: DFIR Global Pipeline
 
 on:
@@ -29,10 +28,11 @@ jobs:
       - id: discover
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           shopt -s nullglob
           CASES=(cases/*)
           COUNT=${#CASES[@]}
+
           JSON="["
           SEP=""
           for C in "${CASES[@]}"; do
@@ -45,8 +45,9 @@ jobs:
             SEP=","
           done
           JSON="${JSON}]"
-          echo "matrix=$JSON" >> $GITHUB_OUTPUT
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "Discovered $COUNT cases"
 
   per-case:
@@ -89,10 +90,22 @@ jobs:
         with:
           case_path: ${{ matrix.case }}
 
+      - name: Sanitize artifact name
+        id: art
+        shell: bash
+        run: |
+          set -euo pipefail
+          name='${{ matrix.case }}'
+          # option 1: remplacer "/" par "-"
+          name="${name//\//-}"
+          # option 2 (si tu préfères): ne garder que le basename
+          # name="$(basename "$name")"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
       - name: Upload case artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.case }}
+          name: ${{ steps.art.outputs.name }}
           path: |
             ${{ matrix.case }}/outputs/per_type/**/report.*
             ${{ matrix.case }}/reports/CaseReport.md
@@ -100,7 +113,7 @@ jobs:
       - name: Commit CaseReport
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           git config user.name "dfir-bot"
           git config user.email "dfir-bot@users.noreply.github.com"
           git add "${{ matrix.case }}/reports/CaseReport.md" "${{ matrix.case }}/outputs/per_type" || true
@@ -121,7 +134,7 @@ jobs:
       - name: Commit SuperReport
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           git config user.name "dfir-bot"
           git config user.email "dfir-bot@users.noreply.github.com"
           git add reports/SuperReport.md || true
@@ -134,23 +147,37 @@ jobs:
     if: needs.discover-cases.outputs.count != '0'
     steps:
       - uses: actions/checkout@v4
+
       - name: Check prerequisites & cases count
         id: gate
         shell: bash
         run: |
-          COUNT=${{ needs.discover-cases.outputs.count }}
-          if [ -f remediation/prereqs.yml ]; then echo "prereqs=true" >> $GITHUB_OUTPUT; else echo "prereqs=false" >> $GITHUB_OUTPUT; fi
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          COUNT='${{ needs.discover-cases.outputs.count }}'
+          HAS_PREREQS=false
+          [ -f remediation/prereqs.yml ] && HAS_PREREQS=true
+
+          DO_REMED=false
+          if [ "$COUNT" -ge 2 ] && [ "$HAS_PREREQS" = true ]; then
+            DO_REMED=true
+          fi
+
+          echo "prereqs=$HAS_PREREQS" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "do_remed=$DO_REMED" >> "$GITHUB_OUTPUT"
+
       - name: Build Remediation Plan (manual approval suggested)
-        if: steps.gate.outputs.prereqs == 'true' && fromJson(needs.discover-cases.outputs.count) >= 2
+        if: steps.gate.outputs.do_remed == 'true'
         uses: ./engine/remediation-plan
         with:
           cases_root: cases
           out_path: reports/RemediationPlan.md
+
       - name: Commit Remediation Plan
-        if: steps.gate.outputs.prereqs == 'true' && fromJson(needs.discover-cases.outputs.count) >= 2
+        if: steps.gate.outputs.do_remed == 'true'
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name "dfir-bot"
           git config user.email "dfir-bot@users.noreply.github.com"
           git add reports/RemediationPlan.md || true
