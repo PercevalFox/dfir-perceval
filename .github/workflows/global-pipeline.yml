@@ -1,0 +1,158 @@
+
+name: DFIR Global Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'cases/**'
+      - 'remediation/**'
+      - '.github/workflows/global-pipeline.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: dfir-global-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  discover-cases:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+      count: ${{ steps.discover.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: discover
+        shell: bash
+        run: |
+          set -e
+          shopt -s nullglob
+          CASES=(cases/*)
+          COUNT=${#CASES[@]}
+          JSON="["
+          SEP=""
+          for C in "${CASES[@]}"; do
+            [ -d "$C" ] || continue
+            N=false; [ -d "$C/inputs/network" ] && N=true
+            E=false; [ -d "$C/inputs/endpoint" ] && E=true
+            S=false; [ -d "$C/inputs/siem" ] && S=true
+            M=false; [ -d "$C/inputs/mobile" ] && M=true
+            JSON="${JSON}${SEP}{\"case\":\"$C\",\"network\":$N,\"endpoint\":$E,\"siem\":$S,\"mobile\":$M}"
+            SEP=","
+          done
+          JSON="${JSON}]"
+          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "Discovered $COUNT cases"
+
+  per-case:
+    needs: discover-cases
+    if: needs.discover-cases.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover-cases.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Forensic - Network
+        if: matrix.network == true
+        uses: ./engine/forensic-network
+        with:
+          case_path: ${{ matrix.case }}
+
+      - name: Forensic - Endpoint
+        if: matrix.endpoint == true
+        uses: ./engine/forensic-endpoint
+        with:
+          case_path: ${{ matrix.case }}
+
+      - name: Forensic - SIEM
+        if: matrix.siem == true
+        uses: ./engine/forensic-siem
+        with:
+          case_path: ${{ matrix.case }}
+
+      - name: Forensic - Mobile
+        if: matrix.mobile == true
+        uses: ./engine/forensic-mobile
+        with:
+          case_path: ${{ matrix.case }}
+
+      - name: Assemble CaseReport
+        uses: ./engine/assemble-case
+        with:
+          case_path: ${{ matrix.case }}
+
+      - name: Upload case artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.case }}
+          path: |
+            ${{ matrix.case }}/outputs/per_type/**/report.*
+            ${{ matrix.case }}/reports/CaseReport.md
+
+      - name: Commit CaseReport
+        shell: bash
+        run: |
+          set -e
+          git config user.name "dfir-bot"
+          git config user.email "dfir-bot@users.noreply.github.com"
+          git add "${{ matrix.case }}/reports/CaseReport.md" "${{ matrix.case }}/outputs/per_type" || true
+          git commit -m "case(${{ matrix.case }}): update reports" 2>/dev/null || echo "No changes"
+          git push || true
+
+  super-aggregate:
+    needs: [discover-cases, per-case]
+    if: needs.discover-cases.outputs.count != '0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Super assemble all cases
+        uses: ./engine/super-assemble
+        with:
+          root: cases
+          out_path: reports/SuperReport.md
+      - name: Commit SuperReport
+        shell: bash
+        run: |
+          set -e
+          git config user.name "dfir-bot"
+          git config user.email "dfir-bot@users.noreply.github.com"
+          git add reports/SuperReport.md || true
+          git commit -m "reports: SuperReport update" 2>/dev/null || echo "No changes"
+          git push || true
+
+  remediation-gate:
+    needs: [discover-cases, super-aggregate]
+    runs-on: ubuntu-latest
+    if: needs.discover-cases.outputs.count != '0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check prerequisites & cases count
+        id: gate
+        shell: bash
+        run: |
+          COUNT=${{ needs.discover-cases.outputs.count }}
+          if [ -f remediation/prereqs.yml ]; then echo "prereqs=true" >> $GITHUB_OUTPUT; else echo "prereqs=false" >> $GITHUB_OUTPUT; fi
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+      - name: Build Remediation Plan (manual approval suggested)
+        if: steps.gate.outputs.prereqs == 'true' && fromJson(needs.discover-cases.outputs.count) >= 2
+        uses: ./engine/remediation-plan
+        with:
+          cases_root: cases
+          out_path: reports/RemediationPlan.md
+      - name: Commit Remediation Plan
+        if: steps.gate.outputs.prereqs == 'true' && fromJson(needs.discover-cases.outputs.count) >= 2
+        shell: bash
+        run: |
+          git config user.name "dfir-bot"
+          git config user.email "dfir-bot@users.noreply.github.com"
+          git add reports/RemediationPlan.md || true
+          git commit -m "reports: RemediationPlan update" 2>/dev/null || echo "No changes"
+          git push || true
