@@ -1,0 +1,36 @@
+
+name: Super Assemble Reports
+description: "Assemble tous les CaseReport en un SuperReport.md"
+inputs:
+  root:
+    required: true
+    description: "Dossier racine des cases (ex: cases)"
+  out_path:
+    required: true
+    description: "Chemin du SuperReport.md à générer"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      name: Super Assemble
+      run: |
+        set -e
+        ROOT="${{ inputs.root }}"
+        OUT="${{ inputs.out_path }}"
+        mkdir -p "$(dirname "$OUT")"
+        NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "# Super Report" > "$OUT"
+        echo "_Généré le: $NOW (UTC)_" >> "$OUT"
+        echo "" >> "$OUT"
+        for C in $(find "$ROOT" -maxdepth 1 -mindepth 1 -type d | sort); do
+          CR="$C/reports/CaseReport.md"
+          NAME="$(basename "$C")"
+          echo "## Case: $NAME" >> "$OUT"
+          if [ -f "$CR" ]; then
+            echo "" >> "$OUT"
+            sed -e '1,2d' "$CR" >> "$OUT"
+            echo "" >> "$OUT"
+          else
+            echo "_Pas de CaseReport.md trouvé pour ce case._" >> "$OUT"
+          fi
+        done

@@ -1,0 +1,51 @@
+
+name: SIEM Forensics Report (Auto)
+description: "Résumé automatique des données dans siem -> report.md + report.json"
+inputs:
+  case_path:
+    description: "Chemin du case (racine)"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Prepare output dirs
+      shell: bash
+      run: |
+        set -e
+        OUT_DIR="${{ inputs.case_path }}/outputs/per_type/siem"
+        mkdir -p "$OUT_DIR"
+    - name: Summarize siem
+      shell: bash
+      run: |
+        set -e
+        CASE="${{ inputs.case_path }}"
+        IN_DIR="$CASE/inputs/siem"
+        OUT_DIR="$CASE/outputs/per_type/siem"
+        NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        COUNT_FILES=$(test -d "$IN_DIR" && find "$IN_DIR" -type f | wc -l || echo 0)
+        echo "Found $COUNT_FILES files in $IN_DIR"
+        cat > "$OUT_DIR/report.json" <<EOF
+{
+  "generated_at": "$NOW",
+  "type": "siem",
+  "case_path": "$CASE",
+  "inputs_dir": "$IN_DIR",
+  "files_count": $COUNT_FILES
+}
+EOF
+        cat > "$OUT_DIR/report.md" <<EOF
+# SIEM Forensics Report (Auto)
+_Généré le: $NOW (UTC)_
+
+- Case: \`$CASE\`
+- Type: **siem**
+- Dossier d'entrée: \`$IN_DIR\`
+- Fichiers détectés: **$COUNT_FILES**
+
+## Aperçu des fichiers
+EOF
+        if [ -d "$IN_DIR" ]; then
+          find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50 >> "$OUT_DIR/report.md"
+        else
+          echo "(Aucun dossier d'entrée trouvé)" >> "$OUT_DIR/report.md"
+        fi

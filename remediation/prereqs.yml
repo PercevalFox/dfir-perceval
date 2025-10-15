@@ -1,0 +1,4 @@
+owner: SOC
+approver: CISO
+windows_baseline: true
+network_isolation_playbook: true
