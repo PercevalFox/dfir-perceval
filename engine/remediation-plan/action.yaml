@@ -1,41 +1,46 @@
-
 name: Build Remediation Plan
 description: "Construit un plan de remédiation priorisé à partir des CaseReport + prereqs.yml"
 inputs:
   cases_root:
+    description: "Racine des cases (ex: cases)"
     required: true
   out_path:
+    description: "Chemin du RemediationPlan.md"
     required: true
 runs:
   using: composite
   steps:
-    - shell: bash
+    - name: Build plan
+      shell: bash
       run: |
-        set -e
+        set -euo pipefail
         ROOT="${{ inputs.cases_root }}"
         OUT="${{ inputs.out_path }}"
         mkdir -p "$(dirname "$OUT")"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        echo "# Remediation Plan" > "$OUT"
-        echo "_Généré le: $NOW (UTC)_" >> "$OUT"
-        echo "" >> "$OUT"
-        if [ -f remediation/prereqs.yml ]; then
-          echo "## Prérequis" >> "$OUT"
-          echo '```yaml' >> "$OUT"
-          cat remediation/prereqs.yml >> "$OUT"
-          echo '```' >> "$OUT"
-          echo "" >> "$OUT"
-        else
-          echo "_Aucun prereqs.yml trouvé._" >> "$OUT"
-        fi
-        echo "## Synthèse des cas" >> "$OUT"
-        for C in $(find "$ROOT" -maxdepth 1 -mindepth 1 -type d | sort); do
-          NAME="$(basename "$C")"
-          echo "- $NAME" >> "$OUT"
-        done
-        echo "" >> "$OUT"
-        echo "## Recommandations (génériques)" >> "$OUT"
-        echo "- Contenir les hôtes affectés (réseau, sessions)." >> "$OUT"
-        echo "- Réinitialiser les secrets exposés, renforcer MFA." >> "$OUT"
-        echo "- Corriger les vecteurs identifiés (GPO, durcissement, règles mail)." >> "$OUT"
-        echo "- Surveiller via SIEM les IoC extraits pendant 30 jours." >> "$OUT"
+        {
+          echo "# Remediation Plan"
+          echo "_Généré le: $NOW (UTC)_"
+          echo
+          if [ -f remediation/prereqs.yml ]; then
+            echo "## Prérequis"
+            echo '```yaml'
+            cat remediation/prereqs.yml
+            echo '```'
+            echo
+          else
+            echo "_Aucun prereqs.yml trouvé._"
+            echo
+          fi
+          echo "## Synthèse des cas"
+          for C in $(find "$ROOT" -maxdepth 1 -mindepth 1 -type d | sort); do
+            NAME="$(basename "$C")"
+            echo "- $NAME"
+          done
+          echo
+          echo "## Recommandations (génériques)"
+          echo "- Contenir les hôtes affectés (réseau, sessions)."
+          echo "- Réinitialiser les secrets exposés, renforcer MFA."
+          echo "- Corriger les vecteurs identifiés (GPO, durcissement, règles mail)."
+          echo "- Surveiller via SIEM les IoC extraits pendant 30 jours."
+        } > "$OUT"
