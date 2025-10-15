@@ -1,0 +1,7 @@
+{
+  "generated_at":"2025-10-15T23:26:07Z",
+  "type":"network",
+  "case_path":"cases/2025-ACME-001",
+  "inputs_dir":"cases/2025-ACME-001/inputs/network",
+  "files_count": 1
+}
