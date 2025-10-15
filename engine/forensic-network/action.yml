@@ -1,5 +1,5 @@
 name: Network Forensics Report (Auto)
-description: "Résumé automatique des données dans network -> report.md + report.json"
+description: "Résumé + détection lite sur network -> report.md + report.json"
 inputs:
   case_path:
     description: "Chemin du case (racine)"
@@ -7,14 +7,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Préparer les dossiers de sortie
+    - name: Préparer sortie
       shell: bash
       run: |
         set -euo pipefail
         OUT_DIR="${{ inputs.case_path }}/outputs/per_type/network"
         mkdir -p "$OUT_DIR"
 
-    - name: Générer les rapports (network)
+    - name: Générer résumés + Détection Lite (network)
       shell: bash
       run: |
         set -euo pipefail
@@ -22,14 +22,38 @@ runs:
         IN_DIR="$CASE/inputs/network"
         OUT_DIR="$CASE/outputs/per_type/network"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        if [ -d "$IN_DIR" ]; then
-          COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
-        else
-          COUNT_FILES=0
+
+        test -d "$IN_DIR" || mkdir -p "$IN_DIR"
+        COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
+
+        SCORE=0
+        HITS=""
+
+        # Domaines/TLD "exotiques" (dans listes/SNI/host exportés en txt/csv)
+        if grep -Eqi '\.(top|xyz|ru|cn|click|zip|mov)\b' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- TLD potentiellement risqués vus (.top/.xyz/.ru/...)"
+          SCORE=$((SCORE+20))
         fi
 
-        printf '{\n  "generated_at":"%s",\n  "type":"network",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s\n}\n' \
-          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" > "$OUT_DIR/report.json"
+        # Marques exfil connues (drive/mega/paste, etc.)
+        if grep -Eqi 'mega|anonfiles|gofile|transfer|pastebin|sendspace' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Marqueurs d'outils/plateformes d'exfil potentiels"
+          SCORE=$((SCORE+20))
+        fi
+
+        # Pics horaires (heuristique simple : lignes marquées la nuit)
+        if grep -E 'T(00|01|02|03|04):[0-9]{2}:[0-9]{2}Z' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Activité nocturne détectée (à vérifier avec contexte)"
+          SCORE=$((SCORE+10))
+        fi
+
+        if   [ "$SCORE" -ge 50 ]; then RISK="HAUT";
+        elif [ "$SCORE" -ge 25 ]; then RISK="MOYEN";
+        elif [ "$SCORE" -ge 10 ]; then RISK="FAIBLE";
+        else RISK="NÉGLIGEABLE"; fi
+
+        printf '{\n  "generated_at":"%s",\n  "type":"network",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s,\n  "risk_score": %s,\n  "risk_level": "%s"\n}\n' \
+          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" "$SCORE" "$RISK" > "$OUT_DIR/report.json"
 
         {
           echo "# Network Forensics Report (Auto)"
@@ -39,11 +63,24 @@ runs:
           echo "- Type: **network**"
           echo "- Dossier d'entrée: \`$IN_DIR\`"
           echo "- Fichiers détectés: **$COUNT_FILES**"
+          echo "- **Risque (Détection Lite)**: $RISK ($SCORE/100)"
+          echo
+          echo "## Findings (heuristiques)"
+          if [ -n "$HITS" ]; then
+            echo -e "$HITS"
+          else
+            echo "(Aucun motif réseau suspect trouvé par les heuristiques)"
+          fi
           echo
           echo "## Aperçu des fichiers"
-          if [ -d "$IN_DIR" ]; then
-            find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50
+          find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50 || true
+          echo
+          echo "## Next steps suggérés"
+          if [ "$SCORE" -ge 50 ]; then
+            echo "- Extraire domaines/IP → enrichir SIEM, vérifier exfil."
+          elif [ "$SCORE" -ge 25 ]; then
+            echo "- Recouper avec endpoint (process/horaires) et logs proxy/DNS."
           else
-            echo "(Aucun dossier d'entrée trouvé)"
+            echo "- Continuer l’analyse standard, préciser la fenêtre temporelle."
           fi
         } > "$OUT_DIR/report.md"
