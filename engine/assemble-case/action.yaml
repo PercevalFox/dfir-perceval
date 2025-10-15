@@ -1,33 +1,34 @@
-
 name: Assemble Case Report
 description: "Assemble les rapports par type en un CaseReport.md"
 inputs:
   case_path:
-    required: true
     description: "Chemin du case"
+    required: true
 runs:
   using: composite
   steps:
-    - shell: bash
-      name: Assemble
+    - name: Assemble
+      shell: bash
       run: |
-        set -e
+        set -euo pipefail
         CASE="${{ inputs.case_path }}"
         OUT="$CASE/reports"
         mkdir -p "$OUT"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        echo "# Case Report" > "$OUT/CaseReport.md"
-        echo "_Généré le: $NOW (UTC)_" >> "$OUT/CaseReport.md"
-        echo "" >> "$OUT/CaseReport.md"
+        {
+          echo "# Case Report"
+          echo "_Généré le: $NOW (UTC)_"
+          echo
+        } > "$OUT/CaseReport.md"
         for TYPE in network endpoint siem mobile; do
           MD="$CASE/outputs/per_type/$TYPE/report.md"
           if [ -f "$MD" ]; then
-            echo "## $(echo $TYPE | tr a-z A-Z)" >> "$OUT/CaseReport.md"
-            echo "" >> "$OUT/CaseReport.md"
+            echo "## $(echo "$TYPE" | tr '[:lower:]' '[:upper:]')" >> "$OUT/CaseReport.md"
+            echo >> "$OUT/CaseReport.md"
             cat "$MD" >> "$OUT/CaseReport.md"
-            echo "" >> "$OUT/CaseReport.md"
+            echo >> "$OUT/CaseReport.md"
           fi
         done
-        if ! grep -q "## " "$OUT/CaseReport.md"; then
+        if ! grep -q "^## " "$OUT/CaseReport.md"; then
           echo "_Aucune section de type détectée._" >> "$OUT/CaseReport.md"
         fi
