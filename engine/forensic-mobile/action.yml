@@ -1,5 +1,5 @@
 name: Mobile Forensics Report (Auto)
-description: "Résumé automatique des données dans mobile -> report.md + report.json"
+description: "Résumé + détection lite sur mobile -> report.md + report.json"
 inputs:
   case_path:
     description: "Chemin du case (racine)"
@@ -7,14 +7,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Préparer les dossiers de sortie
+    - name: Préparer sortie
       shell: bash
       run: |
         set -euo pipefail
         OUT_DIR="${{ inputs.case_path }}/outputs/per_type/mobile"
         mkdir -p "$OUT_DIR"
 
-    - name: Générer les rapports (mobile)
+    - name: Générer résumés + Détection Lite (mobile)
       shell: bash
       run: |
         set -euo pipefail
@@ -22,14 +22,30 @@ runs:
         IN_DIR="$CASE/inputs/mobile"
         OUT_DIR="$CASE/outputs/per_type/mobile"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        if [ -d "$IN_DIR" ]; then
-          COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
-        else
-          COUNT_FILES=0
+
+        test -d "$IN_DIR" || mkdir -p "$IN_DIR"
+        COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
+
+        SCORE=0
+        HITS=""
+
+        # Heuristiques légères (exports Oxygen ciblés)
+        if grep -Eqi 'telegram|signal|whatsapp' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Messageries détectées (vérifier canaux et pièces jointes)"
+          SCORE=$((SCORE+10))
+        fi
+        if grep -Eqi 'download|upload|export' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Transferts/exports mentionnés dans les artefacts"
+          SCORE=$((SCORE+10))
         fi
 
-        printf '{\n  "generated_at":"%s",\n  "type":"mobile",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s\n}\n' \
-          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" > "$OUT_DIR/report.json"
+        if   [ "$SCORE" -ge 25 ]; then RISK="HAUT";
+        elif [ "$SCORE" -ge 15 ]; then RISK="MOYEN";
+        elif [ "$SCORE" -ge 5  ]; then RISK="FAIBLE";
+        else RISK="NÉGLIGEABLE"; fi
+
+        printf '{\n  "generated_at":"%s",\n  "type":"mobile",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s,\n  "risk_score": %s,\n  "risk_level": "%s"\n}\n' \
+          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" "$SCORE" "$RISK" > "$OUT_DIR/report.json"
 
         {
           echo "# Mobile Forensics Report (Auto)"
@@ -39,11 +55,15 @@ runs:
           echo "- Type: **mobile**"
           echo "- Dossier d'entrée: \`$IN_DIR\`"
           echo "- Fichiers détectés: **$COUNT_FILES**"
+          echo "- **Risque (Détection Lite)**: $RISK ($SCORE/100)"
           echo
-          echo "## Aperçu des fichiers"
-          if [ -d "$IN_DIR" ]; then
-            find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50
+          echo "## Findings (heuristiques)"
+          if [ -n "$HITS" ]; then
+            echo -e "$HITS"
           else
-            echo "(Aucun dossier d'entrée trouvé)"
+            echo "(Pas de motif mobile suspect détecté par les heuristiques)"
           fi
+          echo
+          echo "## Next steps suggérés"
+          echo "- Vérifier la période, les contacts et pièces jointes associées aux événements pertinents."
         } > "$OUT_DIR/report.md"
