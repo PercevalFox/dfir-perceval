@@ -1,5 +1,5 @@
 name: Endpoint Forensics Report (Auto)
-description: "Résumé automatique des données dans endpoint -> report.md + report.json"
+description: "Résumé + détection lite sur endpoint -> report.md + report.json"
 inputs:
   case_path:
     description: "Chemin du case (racine)"
@@ -7,14 +7,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Préparer les dossiers de sortie
+    - name: Préparer sortie
       shell: bash
       run: |
         set -euo pipefail
         OUT_DIR="${{ inputs.case_path }}/outputs/per_type/endpoint"
         mkdir -p "$OUT_DIR"
 
-    - name: Générer les rapports (endpoint)
+    - name: Générer résumés + Détection Lite (endpoint)
       shell: bash
       run: |
         set -euo pipefail
@@ -22,15 +22,49 @@ runs:
         IN_DIR="$CASE/inputs/endpoint"
         OUT_DIR="$CASE/outputs/per_type/endpoint"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        if [ -d "$IN_DIR" ]; then
-          COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
-        else
-          COUNT_FILES=0
+
+        test -d "$IN_DIR" || mkdir -p "$IN_DIR"
+        COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
+
+        # --- Détection Lite (simple grep sur CSV/TXT/LOG déjà exportés) ---
+        SCORE=0
+        HITS=""
+
+        # 4688 + commandes classiques d'offense (dans CSV/LOG exportés)
+        if grep -Eqi 'powershell.*-enc|certutil.*urlcache|bitsadmin|rundll32' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Process suspects (4688/CommandLine : powershell -enc / certutil / bitsadmin / rundll32)"
+          SCORE=$((SCORE+30))
         fi
 
-        printf '{\n  "generated_at":"%s",\n  "type":"endpoint",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s\n}\n' \
-          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" > "$OUT_DIR/report.json"
+        # Effacement de logs (1102) dans exports texte/csv
+        if grep -Eqi '\b1102\b|Clear.*Event Log' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Effacement de journaux détecté (1102)"
+          SCORE=$((SCORE+25))
+        fi
 
+        # Création/élévation de comptes (4720/4728/4732)
+        if grep -Eqi '\b(4720|4728|4732)\b' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Comptes/Groupes modifiés (4720/4728/4732)"
+          SCORE=$((SCORE+20))
+        fi
+
+        # Timeline signaux “archives/chiffrement/outils”
+        if [ -f "$IN_DIR/timeline.csv" ] && grep -Eqi ',(7z|rar|zip|vssadmin|bcdedit|rclone|winscp|ssh|pscp)\b' "$IN_DIR/timeline.csv"; then
+          HITS="${HITS}\n- Usage archives/outil transferts/anti-sauvegarde dans timeline"
+          SCORE=$((SCORE+15))
+        fi
+
+        # Seuils & libellés
+        if   [ "$SCORE" -ge 60 ]; then RISK="HAUT";
+        elif [ "$SCORE" -ge 30 ]; then RISK="MOYEN";
+        elif [ "$SCORE" -ge 10 ]; then RISK="FAIBLE";
+        else RISK="NÉGLIGEABLE"; fi
+
+        # JSON
+        printf '{\n  "generated_at":"%s",\n  "type":"endpoint",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s,\n  "risk_score": %s,\n  "risk_level": "%s"\n}\n' \
+          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" "$SCORE" "$RISK" > "$OUT_DIR/report.json"
+
+        # MD
         {
           echo "# Endpoint Forensics Report (Auto)"
           echo "_Généré le: $NOW (UTC)_"
@@ -39,11 +73,25 @@ runs:
           echo "- Type: **endpoint**"
           echo "- Dossier d'entrée: \`$IN_DIR\`"
           echo "- Fichiers détectés: **$COUNT_FILES**"
+          echo "- **Risque (Détection Lite)**: $RISK ($SCORE/100)"
+          echo
+          echo "## Findings (heuristiques)"
+          if [ -n "$HITS" ]; then
+            echo -e "$HITS"
+          else
+            echo "(Aucun motif suspect trouvé par les heuristiques)"
+          fi
           echo
           echo "## Aperçu des fichiers"
-          if [ -d "$IN_DIR" ]; then
-            find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50
+          find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50 || true
+          echo
+          echo "## Next steps suggérés"
+          if [ "$SCORE" -ge 60 ]; then
+            echo "- Isoler l'hôte, gel des preuves, collecte RAM (si possible)."
+            echo "- Rechercher persistance (services, tâches planifiées), exfil."
+          elif [ "$SCORE" -ge 30 ]; then
+            echo "- Revue détaillée EVTX (4688/1102/47xx), corrélation SIEM."
           else
-            echo "(Aucun dossier d'entrée trouvé)"
+            echo "- Poursuivre l'analyse standard, compléter artefacts manquants."
           fi
         } > "$OUT_DIR/report.md"
