@@ -1,5 +1,5 @@
 name: SIEM Forensics Report (Auto)
-description: "Résumé automatique des données dans siem -> report.md + report.json"
+description: "Résumé + détection lite sur siem -> report.md + report.json"
 inputs:
   case_path:
     description: "Chemin du case (racine)"
@@ -7,14 +7,14 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Préparer les dossiers de sortie
+    - name: Préparer sortie
       shell: bash
       run: |
         set -euo pipefail
         OUT_DIR="${{ inputs.case_path }}/outputs/per_type/siem"
         mkdir -p "$OUT_DIR"
 
-    - name: Générer les rapports (siem)
+    - name: Générer résumés + Détection Lite (siem)
       shell: bash
       run: |
         set -euo pipefail
@@ -22,14 +22,34 @@ runs:
         IN_DIR="$CASE/inputs/siem"
         OUT_DIR="$CASE/outputs/per_type/siem"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        if [ -d "$IN_DIR" ]; then
-          COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
-        else
-          COUNT_FILES=0
+
+        test -d "$IN_DIR" || mkdir -p "$IN_DIR"
+        COUNT_FILES="$(find "$IN_DIR" -type f | wc -l | tr -d ' ')"
+
+        SCORE=0
+        HITS=""
+
+        # Rafales d'échecs 4625 / connexions NTLM externes
+        if grep -Eqi '\b4625\b' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Rafales d'échecs d'authent (4625) dans exports SIEM"
+          SCORE=$((SCORE+20))
+        fi
+        if grep -Eqi 'NTLM|LogonType.?3' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Authent NTLM/Type 3 notable (vérifier exposition)"
+          SCORE=$((SCORE+15))
+        fi
+        if grep -Eqi '\b(3389|445)\b' "$IN_DIR"/* 2>/dev/null; then
+          HITS="${HITS}\n- Activité RDP/SMB à surveiller"
+          SCORE=$((SCORE+10))
         fi
 
-        printf '{\n  "generated_at":"%s",\n  "type":"siem",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s\n}\n' \
-          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" > "$OUT_DIR/report.json"
+        if   [ "$SCORE" -ge 45 ]; then RISK="HAUT";
+        elif [ "$SCORE" -ge 25 ]; then RISK="MOYEN";
+        elif [ "$SCORE" -ge 10 ]; then RISK="FAIBLE";
+        else RISK="NÉGLIGEABLE"; fi
+
+        printf '{\n  "generated_at":"%s",\n  "type":"siem",\n  "case_path":"%s",\n  "inputs_dir":"%s",\n  "files_count": %s,\n  "risk_score": %s,\n  "risk_level": "%s"\n}\n' \
+          "$NOW" "$CASE" "$IN_DIR" "$COUNT_FILES" "$SCORE" "$RISK" > "$OUT_DIR/report.json"
 
         {
           echo "# SIEM Forensics Report (Auto)"
@@ -39,11 +59,21 @@ runs:
           echo "- Type: **siem**"
           echo "- Dossier d'entrée: \`$IN_DIR\`"
           echo "- Fichiers détectés: **$COUNT_FILES**"
+          echo "- **Risque (Détection Lite)**: $RISK ($SCORE/100)"
           echo
-          echo "## Aperçu des fichiers"
-          if [ -d "$IN_DIR" ]; then
-            find "$IN_DIR" -maxdepth 1 -type f -printf "- %f\n" | head -n 50
+          echo "## Findings (heuristiques)"
+          if [ -n "$HITS" ]; then
+            echo -e "$HITS"
           else
-            echo "(Aucun dossier d'entrée trouvé)"
+            echo "(Aucun motif SIEM suspect trouvé par les heuristiques)"
+          fi
+          echo
+          echo "## Next steps suggérés"
+          if [ "$SCORE" -ge 45 ]; then
+            echo "- Élargir périmètre (latéralisation), corréler comptes/hosts."
+          elif [ "$SCORE" -ge 25 ]; then
+            echo "- Zoom sur tranches horaires et hôtes récurrents."
+          else
+            echo "- Continuer l’analyse et valider hypothèses."
           fi
         } > "$OUT_DIR/report.md"
