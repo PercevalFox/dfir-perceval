@@ -7,7 +7,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Assemble enriched CaseReport (portable, sans arrays)
+    - name: Assemble enriched CaseReport (no arrays, no awk)
       shell: bash
       run: |
         set -euo pipefail
@@ -16,55 +16,45 @@ runs:
         mkdir -p "$OUT"
         NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-        # -- helpers
         get_score() {
-          local f="$1"; local s="0"
+          # retourne 0 si absent
+          local f="$1"
           if [ -f "$f" ]; then
-            s="$(grep -Eo '"risk_score"\s*:\s*[0-9]+' "$f" | head -n1 | grep -Eo '[0-9]+' || echo 0)"
+            grep -Eo '"risk_score"[[:space:]]*:[[:space:]]*[0-9]+' "$f" | head -n1 | grep -Eo '[0-9]+' || echo 0
+          else
+            echo 0
           fi
-          echo "${s:-0}"
         }
-        exists() { [ -f "$1" ]; }
 
-        # -- lire scores
+        # chemins rapports unitaires
         RN="$CASE/outputs/per_type/network/report.json"
         RE="$CASE/outputs/per_type/endpoint/report.json"
         RS="$CASE/outputs/per_type/siem/report.json"
         RM="$CASE/outputs/per_type/mobile/report.json"
 
+        # scores (0..100)
         SC_N="$(get_score "$RN")"
         SC_E="$(get_score "$RE")"
         SC_S="$(get_score "$RS")"
         SC_M="$(get_score "$RM")"
 
-        # -- poids de base
+        # poids de base
         W_E=40; W_N=25; W_S=25; W_M=10
-        SUMW=0
-        TYPES_LIST=""
 
-        if exists "$RE"; then SUMW=$((SUMW+W_E)); TYPES_LIST="${TYPES_LIST} endpoint"; fi
-        if exists "$RN"; then SUMW=$((SUMW+W_N)); TYPES_LIST="${TYPES_LIST} network"; fi
-        if exists "$RS"; then SUMW=$((SUMW+W_S)); TYPES_LIST="${TYPES_LIST} siem"; fi
-        if exists "$RM"; then SUMW=$((SUMW+W_M)); TYPES_LIST="${TYPES_LIST} mobile"; fi
-        [ "$SUMW" -eq 0 ] && SUMW=1
+        # poids effectifs (0 si type absent)
+        PE=0; PN=0; PS=0; PM=0
+        [ -f "$RE" ] && PE=$W_E
+        [ -f "$RN" ] && PN=$W_N
+        [ -f "$RS" ] && PS=$W_S
+        [ -f "$RM" ] && PM=$W_M
 
-        # -- normalisation (fractions)
-        nE=$(awk -v w="$W_E" -v t="$SUMW" 'BEGIN{print (w>0?t>0? w/t:0:0)}')
-        nN=$(awk -v w="$W_N" -v t="$SUMW" 'BEGIN{print (w>0?t>0? w/t:0:0)}')
-        nS=$(awk -v w="$W_S" -v t="$SUMW" 'BEGIN{print (w>0?t>0? w/t:0:0)}')
-        nM=$(awk -v w="$W_M" -v t="$SUMW" 'BEGIN{print (w>0?t>0? w/t:0:0)}')
+        # somme des poids
+        SUMW=$((PE + PN + PS + PM))
+        [ "$SUMW" -gt 0 ] || SUMW=1  # éviter /0
 
-        # si un type est absent, son poids effectif = 0
-        exists "$RE" || nE=0
-        exists "$RN" || nN=0
-        exists "$RS" || nS=0
-        exists "$RM" || nM=0
-
-        # -- score global
-        GLOBAL=$(awk -v e="$SC_E" -v n="$SC_N" -v s="$SC_S" -v m="$SC_M" -v wE="$nE" -v wN="$nN" -v wS="$nS" -v wM="$nM" 'BEGIN{
-          g = (e*wE) + (n*wN) + (s*wS) + (m*wM);
-          printf "%.0f", g;
-        }')
+        # moyenne pondérée entière
+        NUM=$(( SC_E*PE + SC_N*PN + SC_S*PS + SC_M*PM ))
+        GLOBAL=$(( NUM / SUMW ))
 
         risk_level() {
           local x="$1"
@@ -75,14 +65,23 @@ runs:
         }
         GLOBAL_LVL="$(risk_level "$GLOBAL")"
 
-        # -- IoC extraction (simple)
+        # Types analysés (jolie chaîne)
+        TYPES_LIST=""
+        [ -f "$RE" ] && TYPES_LIST="${TYPES_LIST}, endpoint"
+        [ -f "$RN" ] && TYPES_LIST="${TYPES_LIST}, network"
+        [ -f "$RS" ] && TYPES_LIST="${TYPES_LIST}, siem"
+        [ -f "$RM" ] && TYPES_LIST="${TYPES_LIST}, mobile"
+        TYPES_LIST="${TYPES_LIST#, }"
+        [ -n "$TYPES_LIST" ] || TYPES_LIST="none"
+
+        # IoC extraction simple
         IN="$CASE/inputs"
         IOC_FILE="$OUT/ioc_table.md"
         {
           echo "| Type | Valeur | Source | Timestamp indicatif |"
           echo "|------|--------|--------|----------------------|"
           if [ -d "$IN/network" ]; then
-            grep -Eoh '[a-zA-Z0-9.-]+\.(top|xyz|ru|cn|click|zip|mov|com|net|io)' "$IN/network"/* 2>/dev/null \
+            grep -Eoh '[A-Za-z0-9.-]+\.(top|xyz|ru|cn|click|zip|mov|com|net|io)' "$IN/network"/* 2>/dev/null \
               | sort -u | head -n 50 | sed 's/.*/| Domaine | & | network | (voir fichier) |/'
             grep -Eoh '([0-9]{1,3}\.){3}[0-9]{1,3}' "$IN/network"/* 2>/dev/null \
               | sort -u | head -n 50 | sed 's/.*/| IP | & | network | (voir fichier) |/'
@@ -91,11 +90,11 @@ runs:
             | sort -u | head -n 50 | sed 's/.*/| Compte | & | endpoint\/siem | (voir fichier) |/'
           grep -Eoh '\b(3389|445)\b' "$IN"/siem/* "$IN"/network/* 2>/dev/null \
             | sort -u | sed 's/.*/| Port | & | siem\/network | (voir fichier) |/'
-          grep -Eoh 'powershell\s*-enc|certutil\s*-urlcache|bitsadmin|rundll32|rclone|vssadmin|bcdedit|ssh' "$IN"/endpoint/* 2>/dev/null \
-            | sort -u | sed 's/.*/| Commande | & | endpoint | (timeline) /'
+          grep -Eoh 'powershell[[:space:]]*-enc|certutil[[:space:]]*-urlcache|bitsadmin|rundll32|rclone|vssadmin|bcdedit|ssh' "$IN"/endpoint/* 2>/dev/null \
+            | sort -u | sed 's/.*/| Commande | & | endpoint | (timeline) |/'
         } > "$IOC_FILE" || true
 
-        # -- Intégrité & gaps
+        # Intégrité & gaps
         HASH_NOTE="Hash non fourni (à générer sur archives d'inputs)"
         [ -d "$CASE/10_Acquisition/Hashes" ] && HASH_NOTE="Hashes présents (vérifier SHA256 des archives)"
         GAP_LIST=""
@@ -105,32 +104,12 @@ runs:
         [ -d "$CASE/inputs/mobile" ] || GAP_LIST="${GAP_LIST}\n- Exports mobile absents"
         [ -n "$GAP_LIST" ] || GAP_LIST="(Rien de bloquant détecté)"
 
-        # -- Meta
         META_TZ="$(grep -E '^timezone:' -h "$CASE/metadata/case.yml" 2>/dev/null | awk '{print $2}' || true)"
         META_PER="$(grep -E '^period:'   -h "$CASE/metadata/case.yml" 2>/dev/null | awk '{print $2}' || true)"
         [ -n "${META_TZ:-}" ] || META_TZ="UTC"
         [ -n "${META_PER:-}" ] || META_PER="(période non précisée)"
         VERDICT="Probable activité malveillante — à confirmer"
         [ "$GLOBAL" -ge 70 ] && VERDICT="Activité malveillante probable (HAUT) — containment conseillé"
-
-        # -- Types analysés (jolie liste)
-        TYPES_LIST="$(echo "${TYPES_LIST# }" | sed 's/ /, /g')"
-        [ -n "$TYPES_LIST" ] || TYPES_LIST="none"
-
-        # -- Recos
-        if [ "$GLOBAL" -ge 70 ]; then
-          RECO_IMM="- Isoler l'hôte, geler preuves, réinit secrets\n- Bloquer domaines/IP observés (proxy/DNS/EDR)\n- Vérifier persistance (services, tâches planifiées)"
-          RECO_7D="- Durcir journaux (Sécurité/PowerShell), GPO\n- Revue comptes/groupes, renforcer MFA"
-          RECO_30D="- Surveiller IoC 30j (SIEM)\n- Playbooks & leçons apprises"
-        elif [ "$GLOBAL" -ge 40 ]; then
-          RECO_IMM="- Corrélation SIEM ciblée sur créneaux/hosts\n- Vérifier comptes/modifs récentes"
-          RECO_7D="- Compléter artefacts manquants, durcissement basique"
-          RECO_30D="- Surveillance élargie + sensibilisation"
-        else
-          RECO_IMM="- Continuer analyse standard selon hypothèses"
-          RECO_7D="- Compléter artefacts (SIEM/proxy/RAM si pertinent)"
-          RECO_30D="- Mettre à jour règles et tableaux de bord"
-        fi
 
         CR="$OUT/CaseReport.md"
         {
@@ -159,18 +138,21 @@ runs:
           echo
           echo "## Recommandations priorisées"
           echo "### Immédiat (0–24h)"
-          printf "%b\n" "$RECO_IMM"
+          echo "- Isoler l'hôte, geler preuves, réinit secrets"
+          echo "- Bloquer domaines/IP observés (proxy/DNS/EDR)"
+          echo "- Vérifier persistance (services, tâches planifiées)"
           echo
           echo "### Sous 7 jours"
-          printf "%b\n" "$RECO_7D"
+          echo "- Durcir journaux (Sécurité/PowerShell), GPO"
+          echo "- Revue comptes/groupes, renforcer MFA"
           echo
           echo "### Sous 30 jours"
-          printf "%b\n" "$RECO_30D"
+          echo "- Surveiller IoC 30j (SIEM)"
+          echo "- Playbooks & leçons apprises"
           echo
           echo "## Gaps / Manques"
           printf "%b\n" "$GAP_LIST"
           echo
-
           for TYPE in network endpoint siem mobile; do
             MD="$CASE/outputs/per_type/$TYPE/report.md"
             if [ -f "$MD" ]; then
@@ -180,7 +162,6 @@ runs:
               echo
             fi
           done
-
           if ! [ -f "$CASE/outputs/per_type/network/report.md" ] && \
              ! [ -f "$CASE/outputs/per_type/endpoint/report.md" ] && \
              ! [ -f "$CASE/outputs/per_type/siem/report.md" ] && \
