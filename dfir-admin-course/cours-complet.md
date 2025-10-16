@@ -1,5 +1,5 @@
 # Support de cours — Digital Forensics (enquête administrative)  
-_par Perceval_ • Version écran partage (2 jours)
+_par Perceval_
 
 ---
 
