@@ -1,0 +1,9 @@
+{
+  "generated_at":"2025-10-16T10:38:07Z",
+  "type":"endpoint",
+  "case_path":"cases/case-test",
+  "inputs_dir":"cases/case-test/inputs/endpoint",
+  "files_count": 2,
+  "risk_score": 25,
+  "risk_level": "FAIBLE"
+}
