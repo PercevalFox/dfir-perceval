@@ -1,0 +1,9 @@
+{
+  "generated_at":"2025-10-16T23:05:41Z",
+  "type":"mobile",
+  "case_path":"cases/case-2025-ACME-007-dingueries",
+  "inputs_dir":"cases/case-2025-ACME-007-dingueries/inputs/mobile",
+  "files_count": 1,
+  "risk_score": 20,
+  "risk_level": "MOYEN"
+}

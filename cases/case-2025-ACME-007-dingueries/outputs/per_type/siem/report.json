@@ -1,0 +1,9 @@
+{
+  "generated_at":"2025-10-16T23:05:41Z",
+  "type":"siem",
+  "case_path":"cases/case-2025-ACME-007-dingueries",
+  "inputs_dir":"cases/case-2025-ACME-007-dingueries/inputs/siem",
+  "files_count": 2,
+  "risk_score": 45,
+  "risk_level": "HAUT"
+}

@@ -1,0 +1,9 @@
+{
+  "generated_at":"2025-10-16T23:05:40Z",
+  "type":"network",
+  "case_path":"cases/case-2025-ACME-007-dingueries",
+  "inputs_dir":"cases/case-2025-ACME-007-dingueries/inputs/network",
+  "files_count": 2,
+  "risk_score": 50,
+  "risk_level": "HAUT"
+}
