@@ -1,5 +1,5 @@
 # Case Report
-_Généré le: 2025-10-16T10:38:07Z (UTC)_
+_Généré le: 2025-10-16T10:59:59Z (UTC)_
 
 ## Résumé exécutif
 - **Période** : 2025-10-10/2025-10-15 (UTC)
@@ -38,7 +38,7 @@ _Généré le: 2025-10-16T10:38:07Z (UTC)_
 ## ENDPOINT
 
 # Endpoint Forensics Report (Auto)
-_Généré le: 2025-10-16T10:38:07Z (UTC)_
+_Généré le: 2025-10-16T10:59:59Z (UTC)_
 
 - Case: `cases/case-test`
 - Type: **endpoint**
